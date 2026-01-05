@@ -1,6 +1,6 @@
 # Motivational Salience Index (MSI) Modeling / preliminary analyses
 
-This repository contains the machine learning preliminary analysis pipeline used to decode subjective food preference from implicit behavioral task signatures. The data are derived from Najeberg et al. (2019), they contain: food item liking (VAS ratings), and behavioral responses to tasks featuring these food items. We compared the performance of reuglarized regression (Elastic Net), a tree-based model (HistGB), and recurrent neural networks (LSTM) in predicting food preferences. 
+This repository contains the machine learning preliminary analysis pipeline used to decode subjective food preference from implicit behavioral task signatures. The data are derived from Najberg et al. (2019), they contain: food item liking (VAS ratings), and behavioral responses to tasks featuring these food items. We compared the performance of reuglarized regression (Elastic Net), a tree-based model (HistGB), and recurrent neural networks (LSTM) in predicting food preferences. 
 
 ## Project Overview
 The goal of this project is to predict individual food liking (VAS scores) using behavioral metrics derived from behavioral tasks. We applied within-person centering to isolate cue-specific reactivity.
