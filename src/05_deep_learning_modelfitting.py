@@ -70,29 +70,6 @@ X_test, y_test, pids_test = create_sequences(TEST_PATH, SEQ_LEN)
 
 mlflow.set_experiment(MLFLOW_EXPERIMENT)
 
-# with mlflow.start_run():
-#     model = models.Sequential([
-#         layers.Input(shape=(SEQ_LEN, len(FEATURE_COLS))),
-#         # Masking layer tells LSTM to ignore the zero-padding
-#         layers.Masking(mask_value=0.0),
-#         layers.LSTM(64, dropout=0.2),
-#         layers.Dense(32, activation='relu'),
-#         layers.Dense(1, activation='linear') 
-#     ])
-
-#     model.compile(optimizer='adam', loss='mse', metrics=['mae'])
-#     mlflow.tensorflow.autolog()
-
-#     early_stop = callbacks.EarlyStopping(monitor='val_loss', patience=7, restore_best_weights=True)
-    
-#     model.fit(
-#         X_train, y_train, 
-#         epochs=100, 
-#         batch_size=32, 
-#         validation_split=0.2, 
-#         callbacks=[early_stop]
-#     )
-
 with mlflow.start_run():
     model = models.Sequential([
         layers.Input(shape=(SEQ_LEN, len(FEATURE_COLS))),
