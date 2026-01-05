@@ -1,0 +1,15 @@
+# Data and local files
+data/
+*.csv
+*.joblib
+*.xlsx
+*.RData
+
+# Environment
+.venv/
+__pycache__/
+
+# Tracking & Logs
+mlruns/
+mlflow.db
+.ipynb_checkpoints/

@@ -1,0 +1,177 @@
+# -*- coding: utf-8 -*-
+"""
+Script: 04_ML_Modeling.py
+Project: Motivational Salience Index (MSI)
+Author: Marie Pittet
+Description: This script benchmarks ElasticNet, Ridge, and HistGB on item-level behavioral data.
+"""
+# ------------------------------------------------------------
+# 0) Env
+# ------------------------------------------------------------
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import mlflow
+import mlflow.sklearn
+from scipy.stats import spearmanr
+
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import GroupKFold
+from sklearn.linear_model import Ridge
+from sklearn.ensemble import HistGradientBoostingRegressor
+from sklearn.inspection import permutation_importance
+from sklearn.svm import SVR
+from sklearn.linear_model import ElasticNet
+from sklearn.inspection import permutation_importance
+
+# ------------------------------------------------------------
+# 1) CONFIG & TRANSFORMERS
+# ------------------------------------------------------------
+DATA_PATH = "data/preprocessed/by_item/training.csv"
+TARGET, PERSON_ID, ITEM_ID = "vas_score", "fk_device_id", "item_id"
+ID_COLS = [PERSON_ID, ITEM_ID]
+DROP_SUBSTRINGS = ["SST", "n_trials"]
+N_SPLITS, RT_QUANTILE, RANDOM_STATE = 5, 0.99, 42
+
+class BehavioralCleaner(BaseEstimator, TransformerMixin):
+    """Hard-removes all non-behavioral IDs and substrings to prevent leakage."""
+    def __init__(self, substrings, ids_to_kill):
+        self.substrings = substrings
+        self.ids_to_kill = ids_to_kill
+
+    def fit(self, X, y=None):
+        cols = list(X.columns)
+        # Drop patterns, IDs, and any 'relative' versions of IDs created by centering
+        self.cols_to_drop_ = [
+            c for c in cols if any(s in c for s in self.substrings) 
+            or any(i in c for i in self.ids_to_kill)
+        ]
+        return self
+
+    def transform(self, X):
+        return X.drop(columns=self.cols_to_drop_, errors="ignore")
+
+class WithinPersonCentering(BaseEstimator, TransformerMixin):
+    def __init__(self, person_col): 
+        self.person_col = person_col
+
+    def fit(self, X, y=None):
+        self.numeric_cols_ = X.select_dtypes(include=[np.number]).columns.tolist()
+        if self.person_col in self.numeric_cols_: 
+            self.numeric_cols_.remove(self.person_col)
+        return self
+
+    def transform(self, X):
+        X = X.copy()
+        for c in self.numeric_cols_:
+            # Only center columns that aren't the Item ID itself
+            if ITEM_ID not in c:
+                X[f"{c}_relative"] = X[c] - X.groupby(self.person_col)[c].transform('mean')
+        return X
+
+class CapRT(BaseEstimator, TransformerMixin):
+    def __init__(self, quantile=0.99): self.quantile = quantile
+    def fit(self, X, y=None):
+        rt_cols = [c for c in X.columns if "rt" in c.lower() and "missing" not in c.lower()]
+        self.caps_ = X[rt_cols].quantile(self.quantile)
+        return self
+    def transform(self, X):
+        X = X.copy()
+        for c, cap in self.caps_.items():
+            if c in X.columns: X[c] = X[c].clip(lower=0, upper=cap)
+        return X
+
+# ------------------------------------------------------------
+# 2) METRICS
+# ------------------------------------------------------------
+def get_spearman(df, score_col):
+    rhos = []
+    for _, g in df.groupby(PERSON_ID):
+        if len(g) < 3: continue
+        yt, yp = g['y_true_c'].values, g[score_col].values
+        if np.nanstd(yt) < 1e-12 or np.nanstd(yp) < 1e-12: continue
+        rho, _ = spearmanr(yt, yp); rhos.append(rho)
+    return np.mean(rhos) if rhos else 0.0
+
+# ------------------------------------------------------------
+# 3) MODELING & VISUALIZATION
+# ------------------------------------------------------------
+df = pd.read_csv(DATA_PATH); y = df[TARGET].astype(float); X = df.drop(columns=[TARGET]).copy()
+mlflow.set_experiment("food_liking_no_leakage")
+
+# The pipeline now explicitly kills ITEM_ID and PERSON_ID after centering
+pipeline = Pipeline([
+    ("centering", WithinPersonCentering(person_col=PERSON_ID)),
+    ("cleaner", BehavioralCleaner(substrings=DROP_SUBSTRINGS, ids_to_kill=ID_COLS)),
+    ("capping", CapRT(quantile=RT_QUANTILE)),
+    ("imputer", SimpleImputer(strategy="median", add_indicator=True)),
+    ("scaler", StandardScaler()),
+])
+
+models = {
+    "ElasticNet": ElasticNet(alpha=1.0, l1_ratio=0.5, random_state=RANDOM_STATE),
+    "SVR": SVR(kernel='rbf', C=1.0, epsilon=0.1),
+    "Ridge": Ridge(alpha=10.0, random_state=RANDOM_STATE),
+    "HistGB": HistGradientBoostingRegressor(random_state=RANDOM_STATE, max_iter=200)
+}
+
+cv = GroupKFold(n_splits=N_SPLITS)
+
+for model_name, reg in models.items():
+    with mlflow.start_run(run_name=f"{model_name}_Leakage_Free"):
+        all_res = []
+        for fold, (tr_idx, va_idx) in enumerate(cv.split(X, y, groups=X[ITEM_ID]), 1):
+            X_tr, X_va = X.iloc[tr_idx], X.iloc[va_idx]
+            y_tr, y_va = y.iloc[tr_idx], y.iloc[va_idx]
+            
+            # Target Centering
+            mu = y_tr.groupby(X_tr[PERSON_ID]).mean()
+            y_tr_c, y_va_c = y_tr - X_tr[PERSON_ID].map(mu), y_va - X_va[PERSON_ID].map(mu)
+
+            # Process features
+            Xtr_p = pipeline.fit_transform(X_tr)
+            Xva_p = pipeline.transform(X_va)
+            
+            # Fit & Predict
+            reg.fit(Xtr_p, y_tr_c.fillna(0))
+            
+            fold_df = pd.DataFrame({
+                PERSON_ID: X_va[PERSON_ID], 
+                "y_true_c": y_va_c, 
+                "y_pred": reg.predict(Xva_p)
+            }).dropna()
+            all_res.append(fold_df)
+
+        # Metrics
+        results = pd.concat(all_res)
+        results['y_rand'] = results.groupby(PERSON_ID)['y_pred'].transform(np.random.permutation)
+        rho, rho_c = get_spearman(results, "y_pred"), get_spearman(results, "y_rand")
+
+        print(f"\n[{model_name}] Spearman: {rho:.4f} vs Chance: {rho_c:.4f}")
+
+        # --- PLOTTING ---
+        fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+        sns.barplot(x=['Chance', 'Model'], y=[rho_c, rho], ax=axes[0], palette="coolwarm")
+        axes[0].set_title(f"{model_name} Performance")
+
+        # Feature Importance logic
+        feat_names = pipeline.named_steps['imputer'].get_feature_names_out()
+        
+        # SVR and HistGB don't have .coef_, so we use Permutation Importance for both
+        if model_name in ["Ridge", "ElasticNet"]:
+            imps = np.abs(reg.coef_)
+            imp_title = "Coefficients (Beta Weights)"
+        else:
+            # SVR/HistGB use Permutation Importance
+            r = permutation_importance(reg, Xva_p, y_va_c.fillna(0), n_repeats=5, random_state=RANDOM_STATE)
+            imps = r.importances_mean
+            imp_title = "Permutation Importance"
+        
+        fi = pd.DataFrame({'Feature': feat_names, 'Imp': imps}).sort_values('Imp', ascending=False).head(15)
+        sns.barplot(x='Imp', y='Feature', data=fi, ax=axes[1], palette="viridis")
+        axes[1].set_title(f"{model_name} Top 15 - {imp_title}")
+        plt.tight_layout(); plt.show()
