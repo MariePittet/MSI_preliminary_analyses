@@ -103,7 +103,7 @@ def get_spearman(df, score_col):
 df = pd.read_csv(DATA_PATH); y = df[TARGET].astype(float); X = df.drop(columns=[TARGET]).copy()
 mlflow.set_experiment("food_liking_no_leakage")
 
-# The pipeline now explicitly kills ITEM_ID and PERSON_ID after centering
+# The pipeline explicitly kills ITEM_ID and PERSON_ID after centering to avoid leakage
 pipeline = Pipeline([
     ("centering", WithinPersonCentering(person_col=PERSON_ID)),
     ("cleaner", BehavioralCleaner(substrings=DROP_SUBSTRINGS, ids_to_kill=ID_COLS)),
