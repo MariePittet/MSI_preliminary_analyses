@@ -3,7 +3,7 @@
 Script: 04_ML_Modeling.py
 Project: Motivational Salience Index (MSI)
 Author: Marie Pittet
-Description: This script benchmarks ElasticNet, Ridge, and HistGB on item-level behavioral data.
+Description: Benchmarks ElasticNet, Ridge, and HistGB on item-level behavioral data.
 """
 # ------------------------------------------------------------
 # 0) Env
@@ -26,7 +26,6 @@ from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.inspection import permutation_importance
 from sklearn.svm import SVR
 from sklearn.linear_model import ElasticNet
-from sklearn.inspection import permutation_importance
 
 # ------------------------------------------------------------
 # 1) CONFIG & TRANSFORMERS
@@ -37,6 +36,22 @@ ID_COLS = [PERSON_ID, ITEM_ID]
 DROP_SUBSTRINGS = ["SST", "n_trials"]
 N_SPLITS, RT_QUANTILE, RANDOM_STATE = 5, 0.99, 42
 
+# --- Human-Readable Mapping for Grant-Ready Figures ---
+RENAME_DICT = {
+    'n_fa_GNG_relative': 'Inhibitory Failure (GNG False Alarms)',
+    'mean_rt_go_GNG_relative': 'Approach Speed (GNG Go RT)',
+    'n_hit_GNG_relative': 'Task Engagement (GNG Hit Rate)',
+    'n_hit_GNG': 'Total Successful Trials (GNG Hits)',
+    'fa_rate_CAT_relative': 'Choice Impulsivity (CAT Errors)',
+    'acc_nogo_CAT_relative': 'Self-Control Accuracy (CAT)',
+    'median_rt_fa_CAT': 'Fast Decision Speed (CAT)',
+    'median_rt_go_GNG_relative': 'Consistent Approach Speed (GNG)',
+    'n_cr_CAT_relative': 'Successful Inhibitions (CAT)',
+    'n_hit_CAT_relative': 'Selection Accuracy (CAT)',
+    'n_miss_GNG_relative': 'Attention Lapses (GNG Misses)',
+    'missingindicator_median_rt_fa_GNG_relative': 'Data Consistency Index',
+}
+
 class BehavioralCleaner(BaseEstimator, TransformerMixin):
     """Hard-removes all non-behavioral IDs and substrings to prevent leakage."""
     def __init__(self, substrings, ids_to_kill):
@@ -45,7 +60,6 @@ class BehavioralCleaner(BaseEstimator, TransformerMixin):
 
     def fit(self, X, y=None):
         cols = list(X.columns)
-        # Drop patterns, IDs, and any 'relative' versions of IDs created by centering
         self.cols_to_drop_ = [
             c for c in cols if any(s in c for s in self.substrings) 
             or any(i in c for i in self.ids_to_kill)
@@ -68,7 +82,6 @@ class WithinPersonCentering(BaseEstimator, TransformerMixin):
     def transform(self, X):
         X = X.copy()
         for c in self.numeric_cols_:
-            # Only center columns that aren't the Item ID itself
             if ITEM_ID not in c:
                 X[f"{c}_relative"] = X[c] - X.groupby(self.person_col)[c].transform('mean')
         return X
@@ -103,7 +116,6 @@ def get_spearman(df, score_col):
 df = pd.read_csv(DATA_PATH); y = df[TARGET].astype(float); X = df.drop(columns=[TARGET]).copy()
 mlflow.set_experiment("food_liking_no_leakage")
 
-# The pipeline explicitly kills ITEM_ID and PERSON_ID after centering to avoid leakage
 pipeline = Pipeline([
     ("centering", WithinPersonCentering(person_col=PERSON_ID)),
     ("cleaner", BehavioralCleaner(substrings=DROP_SUBSTRINGS, ids_to_kill=ID_COLS)),
@@ -128,15 +140,12 @@ for model_name, reg in models.items():
             X_tr, X_va = X.iloc[tr_idx], X.iloc[va_idx]
             y_tr, y_va = y.iloc[tr_idx], y.iloc[va_idx]
             
-            # Target Centering
             mu = y_tr.groupby(X_tr[PERSON_ID]).mean()
             y_tr_c, y_va_c = y_tr - X_tr[PERSON_ID].map(mu), y_va - X_va[PERSON_ID].map(mu)
 
-            # Process features
             Xtr_p = pipeline.fit_transform(X_tr)
             Xva_p = pipeline.transform(X_va)
             
-            # Fit & Predict
             reg.fit(Xtr_p, y_tr_c.fillna(0))
             
             fold_df = pd.DataFrame({
@@ -146,32 +155,39 @@ for model_name, reg in models.items():
             }).dropna()
             all_res.append(fold_df)
 
-        # Metrics
         results = pd.concat(all_res)
         results['y_rand'] = results.groupby(PERSON_ID)['y_pred'].transform(np.random.permutation)
         rho, rho_c = get_spearman(results, "y_pred"), get_spearman(results, "y_rand")
 
         print(f"\n[{model_name}] Spearman: {rho:.4f} vs Chance: {rho_c:.4f}")
 
-        # --- PLOTTING ---
-        fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+        # --- UPDATED PLOTTING ---
+        fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+        
+        # Left Plot: Performance vs Chance
         sns.barplot(x=['Chance', 'Model'], y=[rho_c, rho], ax=axes[0], palette="coolwarm")
-        axes[0].set_title(f"{model_name} Performance")
+        axes[0].set_title(f"{model_name} Performance (Within-Person Spearman ρ)", fontsize=14)
+        axes[0].set_ylabel("Correlation Coefficient")
 
         # Feature Importance logic
         feat_names = pipeline.named_steps['imputer'].get_feature_names_out()
         
-        # SVR and HistGB don't have .coef_, so we use Permutation Importance for both
         if model_name in ["Ridge", "ElasticNet"]:
             imps = np.abs(reg.coef_)
-            imp_title = "Coefficients (Beta Weights)"
+            imp_title = "Feature Weights (Beta Coefficients)"
         else:
-            # SVR/HistGB use Permutation Importance
             r = permutation_importance(reg, Xva_p, y_va_c.fillna(0), n_repeats=5, random_state=RANDOM_STATE)
             imps = r.importances_mean
             imp_title = "Permutation Importance"
         
-        fi = pd.DataFrame({'Feature': feat_names, 'Imp': imps}).sort_values('Imp', ascending=False).head(15)
+        # Create Importance DF and apply mapping
+        fi = pd.DataFrame({'Feature': feat_names, 'Imp': imps}).sort_values('Imp', ascending=False).head(10)
+        fi['Feature'] = fi['Feature'].map(lambda x: RENAME_DICT.get(x, x))
+        
+        # Right Plot: Importance
         sns.barplot(x='Imp', y='Feature', data=fi, ax=axes[1], palette="viridis")
-        axes[1].set_title(f"{model_name} Top 15 - {imp_title}")
+        axes[1].set_title(f"Top 10 Behavioral Predictors of Preference", fontsize=14)
+        axes[1].set_xlabel("Impact on Prediction Score")
+        axes[1].set_ylabel("Behavioral Metric")
+
         plt.tight_layout(); plt.show()

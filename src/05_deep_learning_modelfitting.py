@@ -12,7 +12,8 @@ import numpy as np
 import mlflow
 import mlflow.tensorflow
 import tensorflow as tf
-from tensorflow.keras import layers, models, callbacks # type: ignore
+from tensorflow.keras import layers, models, callbacks
+from tensorflow.keras import optimizers
 from scipy.stats import spearmanr
 
 # ------------------------------------------------------------
@@ -92,6 +93,30 @@ with mlflow.start_run():
         validation_split=0.2, 
         callbacks=[early_stop]
     )
+
+# Slower learning rate but data is so noisy that performance gets worse
+# with mlflow.start_run():
+#     model = models.Sequential([
+#         layers.Input(shape=(SEQ_LEN, len(FEATURE_COLS))),
+#         # Masking layer tells LSTM to ignore the zero-padding
+#         layers.Masking(mask_value=0.0),
+#         layers.LSTM(64, dropout=0.2),
+#         layers.Dense(32, activation='relu'),
+#         layers.Dense(1, activation='linear') 
+#     ])
+
+#     model.compile(optimizer=optimizers.Adam(learning_rate=0.0001), loss='mse', metrics=['mae'])
+#     mlflow.tensorflow.autolog()
+
+#     early_stop = callbacks.EarlyStopping(monitor='val_loss', patience=7, restore_best_weights=True)
+    
+#     model.fit(
+#         X_train, y_train, 
+#         epochs=100, 
+#         batch_size=32, 
+#         validation_split=0.2, 
+#         callbacks=[early_stop]
+#     )
 
     # Within-person Spearman Evaluation
     preds = model.predict(X_test).flatten()
