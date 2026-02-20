@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Script: 04_ML_Modeling.py
+Script: 03_ML_Modeling.py
 Project: Motivational Salience Index (MSI)
 Author: Marie Pittet
 Description: Benchmarks ElasticNet, Ridge, and HistGB on item-level behavioral data.

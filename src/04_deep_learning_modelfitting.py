@@ -1,5 +1,5 @@
 """
-Script: 05_deeplearning_modelfitting.py
+Script: 04_deeplearning_modelfitting.py
 Project: Motivational Salience Index (MSI)
 Author: Marie Pittet
 Description: This scripts fits a LSTM network to trial-level behavioral data.
