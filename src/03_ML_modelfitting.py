@@ -30,7 +30,7 @@ from sklearn.linear_model import ElasticNet
 # ------------------------------------------------------------
 # 1) CONFIG & TRANSFORMERS
 # ------------------------------------------------------------
-DATA_PATH = "data/preprocessed/by_item/training.csv"
+DATA_PATH = "../data/preprocessed/by_item/training.csv"
 TARGET, PERSON_ID, ITEM_ID = "vas_score", "fk_device_id", "item_id"
 ID_COLS = [PERSON_ID, ITEM_ID]
 DROP_SUBSTRINGS = ["SST", "n_trials"]
