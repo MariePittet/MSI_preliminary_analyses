@@ -3,8 +3,8 @@ Script: 02b_by_trial_split.py
 Project: Motivational Salience Index (MSI)
 Author: Marie Pittet
 Description: This script:
+- Does some feature engineering
 - Performs participant-level train/test split.
-- Standardizes RTs and numeric features.
 - Saves as long-format CSVs for LSTM/RNN ingestion.
 """
 # ------------------------------------------------------------
