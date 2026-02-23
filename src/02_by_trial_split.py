@@ -9,7 +9,7 @@ Description: This script:
 """
 # ------------------------------------------------------------
 # 0) Env
-# ------------------------------------------------------------
+# ------------------------------------------------------------wq
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import GroupShuffleSplit
@@ -52,17 +52,8 @@ def engineer_trial_features(data):
 train_df = engineer_trial_features(train_df)
 test_df = engineer_trial_features(test_df)
 
-# Scale numeric features based on Training set only to avoid leakage
-scaler = StandardScaler()
-num_cols = ['rt', 't_onset', 't_response'] # Adjust based on your snippet columns
-
-train_df[num_cols] = scaler.fit_transform(train_df[num_cols])
-test_df[num_cols] = scaler.transform(test_df[num_cols])
-
 # ------------------------------------------------------------
 # 4) Saving the Datasets
 # ------------------------------------------------------------
-train_df.to_csv("data/preprocessed/by_trial/training.csv", index=False)
-test_df.to_csv("data/preprocessed/by_trial/test.csv", index=False)
-
-print(f"Preprocessed {len(train_df)} training trials and {len(test_df)} test trials.")
+train_df.to_csv("../data/preprocessed/by_trial/training.csv", index=False)
+test_df.to_csv("../data/preprocessed/by_trial/test.csv", index=False)
