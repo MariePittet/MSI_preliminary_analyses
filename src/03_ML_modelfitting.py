@@ -1,13 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Script: 03_ML_Modeling.py
-Project: Motivational Salience Index (MSI)
-Author: Marie Pittet
-Description: Benchmarks ElasticNet, Ridge, and HistGB on item-level behavioral data.
+Script: 03_ML_modelfitting_testing.py
+Description: Benchmarks ElasticNet, Ridge, and HistGB, and evaluates on held-out test data.
 """
-# ------------------------------------------------------------
-# 0) Env
-# ------------------------------------------------------------
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -21,64 +16,47 @@ from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import GroupKFold
-from sklearn.linear_model import Ridge
+from sklearn.linear_model import Ridge, ElasticNet
 from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.inspection import permutation_importance
-from sklearn.svm import SVR
-from sklearn.linear_model import ElasticNet
 
 # ------------------------------------------------------------
-# 1) CONFIG & TRANSFORMERS
+# 1) CONFIG & PATHS
 # ------------------------------------------------------------
-DATA_PATH = "../data/preprocessed/by_item/training.csv"
+TRAIN_PATH = "../data/preprocessed/by_item/training.csv"
+TEST_PATH = "../data/preprocessed/by_item/test.csv"
 TARGET, PERSON_ID, ITEM_ID = "vas_score", "fk_device_id", "item_id"
 ID_COLS = [PERSON_ID, ITEM_ID]
 DROP_SUBSTRINGS = ["SST", "n_trials"]
 N_SPLITS, RT_QUANTILE, RANDOM_STATE = 5, 0.99, 42
 
-# --- Human-Readable Mapping for Grant-Ready Figures ---
 RENAME_DICT = {
-    'n_fa_GNG_relative': 'Inhibitory Failure (GNG False Alarms)',
+    'n_fa_GNG_relative': 'Inhibitory Failure (GNG FA)',
     'mean_rt_go_GNG_relative': 'Approach Speed (GNG Go RT)',
-    'n_hit_GNG_relative': 'Task Engagement (GNG Hit Rate)',
-    'n_hit_GNG': 'Total Successful Trials (GNG Hits)',
-    'fa_rate_CAT_relative': 'Choice Impulsivity (CAT Errors)',
     'acc_nogo_CAT_relative': 'Self-Control Accuracy (CAT)',
-    'median_rt_fa_CAT': 'Fast Decision Speed (CAT)',
-    'median_rt_go_GNG_relative': 'Consistent Approach Speed (GNG)',
-    'n_cr_CAT_relative': 'Successful Inhibitions (CAT)',
-    'n_hit_CAT_relative': 'Selection Accuracy (CAT)',
-    'n_miss_GNG_relative': 'Attention Lapses (GNG Misses)',
-    'missingindicator_median_rt_fa_GNG_relative': 'Data Consistency Index',
+    # ... ajoute tes autres mappings ici ...
 }
 
+# ------------------------------------------------------------
+# 2) CUSTOM TRANSFORMERS
+# ------------------------------------------------------------
 class BehavioralCleaner(BaseEstimator, TransformerMixin):
-    """Hard-removes all non-behavioral IDs and substrings to prevent leakage."""
     def __init__(self, substrings, ids_to_kill):
         self.substrings = substrings
         self.ids_to_kill = ids_to_kill
-
     def fit(self, X, y=None):
         cols = list(X.columns)
-        self.cols_to_drop_ = [
-            c for c in cols if any(s in c for s in self.substrings) 
-            or any(i in c for i in self.ids_to_kill)
-        ]
+        self.cols_to_drop_ = [c for c in cols if any(s in c for s in self.substrings) or any(i in c for i in self.ids_to_kill)]
         return self
-
     def transform(self, X):
         return X.drop(columns=self.cols_to_drop_, errors="ignore")
 
 class WithinPersonCentering(BaseEstimator, TransformerMixin):
-    def __init__(self, person_col): 
-        self.person_col = person_col
-
+    def __init__(self, person_col): self.person_col = person_col
     def fit(self, X, y=None):
         self.numeric_cols_ = X.select_dtypes(include=[np.number]).columns.tolist()
-        if self.person_col in self.numeric_cols_: 
-            self.numeric_cols_.remove(self.person_col)
+        if self.person_col in self.numeric_cols_: self.numeric_cols_.remove(self.person_col)
         return self
-
     def transform(self, X):
         X = X.copy()
         for c in self.numeric_cols_:
@@ -99,22 +77,24 @@ class CapRT(BaseEstimator, TransformerMixin):
         return X
 
 # ------------------------------------------------------------
-# 2) METRICS
+# 3) METRICS & UTILS
 # ------------------------------------------------------------
-def get_spearman(df, score_col):
+def get_spearman(df, target_col, pred_col):
     rhos = []
     for _, g in df.groupby(PERSON_ID):
         if len(g) < 3: continue
-        yt, yp = g['y_true_c'].values, g[score_col].values
+        yt, yp = g[target_col].values, g[pred_col].values
         if np.nanstd(yt) < 1e-12 or np.nanstd(yp) < 1e-12: continue
         rho, _ = spearmanr(yt, yp); rhos.append(rho)
     return np.mean(rhos) if rhos else 0.0
 
 # ------------------------------------------------------------
-# 3) MODELING & VISUALIZATION
+# 4) EXECUTION
 # ------------------------------------------------------------
-df = pd.read_csv(DATA_PATH); y = df[TARGET].astype(float); X = df.drop(columns=[TARGET]).copy()
-mlflow.set_experiment("food_liking_no_leakage")
+df_train = pd.read_csv(TRAIN_PATH)
+df_test = pd.read_csv(TEST_PATH)
+
+mlflow.set_experiment("food_liking_final_test")
 
 pipeline = Pipeline([
     ("centering", WithinPersonCentering(person_col=PERSON_ID)),
@@ -126,7 +106,6 @@ pipeline = Pipeline([
 
 models = {
     "ElasticNet": ElasticNet(alpha=1.0, l1_ratio=0.5, random_state=RANDOM_STATE),
-    "SVR": SVR(kernel='rbf', C=1.0, epsilon=0.1),
     "Ridge": Ridge(alpha=10.0, random_state=RANDOM_STATE),
     "HistGB": HistGradientBoostingRegressor(random_state=RANDOM_STATE, max_iter=200)
 }
@@ -134,60 +113,72 @@ models = {
 cv = GroupKFold(n_splits=N_SPLITS)
 
 for model_name, reg in models.items():
-    with mlflow.start_run(run_name=f"{model_name}_Leakage_Free"):
-        all_res = []
-        for fold, (tr_idx, va_idx) in enumerate(cv.split(X, y, groups=X[ITEM_ID]), 1):
+    with mlflow.start_run(run_name=f"{model_name}_Final_Eval"):
+        
+        # --- A) Cross-validation ---
+        X, y = df_train.drop(columns=[TARGET]), df_train[TARGET].astype(float)
+        all_cv_res = []
+        
+        for tr_idx, va_idx in cv.split(X, y, groups=X[ITEM_ID]):
             X_tr, X_va = X.iloc[tr_idx], X.iloc[va_idx]
             y_tr, y_va = y.iloc[tr_idx], y.iloc[va_idx]
             
+            # Within-person centering to avoid leniency bias
             mu = y_tr.groupby(X_tr[PERSON_ID]).mean()
-            y_tr_c, y_va_c = y_tr - X_tr[PERSON_ID].map(mu), y_va - X_va[PERSON_ID].map(mu)
+            y_tr_c = (y_tr - X_tr[PERSON_ID].map(mu)).fillna(0)
+            y_va_c = (y_va - X_va[PERSON_ID].map(mu)).fillna(0)
 
             Xtr_p = pipeline.fit_transform(X_tr)
             Xva_p = pipeline.transform(X_va)
             
-            reg.fit(Xtr_p, y_tr_c.fillna(0))
-            
-            fold_df = pd.DataFrame({
-                PERSON_ID: X_va[PERSON_ID], 
-                "y_true_c": y_va_c, 
-                "y_pred": reg.predict(Xva_p)
-            }).dropna()
-            all_res.append(fold_df)
+            reg.fit(Xtr_p, y_tr_c)
+            fold_df = pd.DataFrame({PERSON_ID: X_va[PERSON_ID], "y_true": y_va_c, "y_pred": reg.predict(Xva_p)})
+            all_cv_res.append(fold_df)
 
-        results = pd.concat(all_res)
-        results['y_rand'] = results.groupby(PERSON_ID)['y_pred'].transform(np.random.permutation)
-        rho, rho_c = get_spearman(results, "y_pred"), get_spearman(results, "y_rand")
-
-        print(f"\n[{model_name}] Spearman: {rho:.4f} vs Chance: {rho_c:.4f}")
-
-        # --- UPDATED PLOTTING ---
-        fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+        cv_results = pd.concat(all_cv_res)
+        rho_cv = get_spearman(cv_results, "y_true", "y_pred")
         
-        # Left Plot: Performance vs Chance
-        sns.barplot(x=['Chance', 'Model'], y=[rho_c, rho], ax=axes[0], palette="coolwarm")
-        axes[0].set_title(f"{model_name} Performance (Within-Person Spearman ρ)", fontsize=14)
-        axes[0].set_ylabel("Correlation Coefficient")
-
-        # Feature Importance logic
+        # --- B) Generalization performance ---
+        # TRaining on all training data
+        mu_full = y.groupby(X[PERSON_ID]).mean()
+        y_train_c = (y - X[PERSON_ID].map(mu_full)).fillna(0)
+        
+        X_train_full_p = pipeline.fit_transform(X)
+        reg.fit(X_train_full_p, y_train_c)
+        
+        # 2. Predicting test y
+        X_test = df_test.drop(columns=[TARGET])
+        y_test = df_test[TARGET].astype(float)
+        
+        # Centering y_test with its own within-person mean
+        mu_test = y_test.groupby(X_test[PERSON_ID]).mean()
+        y_test_c = (y_test - X_test[PERSON_ID].map(mu_test)).fillna(0)
+        
+        X_test_p = pipeline.transform(X_test)
+        y_test_pred = reg.predict(X_test_p)
+        
+        test_df = pd.DataFrame({PERSON_ID: X_test[PERSON_ID], "y_true": y_test_c, "y_pred": y_test_pred})
+        rho_test = get_spearman(test_df, "y_true", "y_pred")
+        
+        print(f"\n[{model_name}] CV Spearman: {rho_cv:.4f} | TEST Spearman: {rho_test:.4f}")
+        
+        # Visualisation-
+        fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+        sns.barplot(x=['CV (Train)', 'Final Test'], y=[rho_cv, rho_test], ax=axes[0], palette="magma")
+        axes[0].set_title(f"{model_name}: Generalization Check")
+        
+        # Feature importance
         feat_names = pipeline.named_steps['imputer'].get_feature_names_out()
+        imps = np.abs(reg.coef_) if hasattr(reg, 'coef_') else permutation_importance(reg, X_test_p, y_test_c, n_repeats=5)['importances_mean']
         
-        if model_name in ["Ridge", "ElasticNet"]:
-            imps = np.abs(reg.coef_)
-            imp_title = "Feature Weights (Beta Coefficients)"
-        else:
-            r = permutation_importance(reg, Xva_p, y_va_c.fillna(0), n_repeats=5, random_state=RANDOM_STATE)
-            imps = r.importances_mean
-            imp_title = "Permutation Importance"
-        
-        # Create Importance DF and apply mapping
         fi = pd.DataFrame({'Feature': feat_names, 'Imp': imps}).sort_values('Imp', ascending=False).head(10)
         fi['Feature'] = fi['Feature'].map(lambda x: RENAME_DICT.get(x, x))
-        
-        # Right Plot: Importance
         sns.barplot(x='Imp', y='Feature', data=fi, ax=axes[1], palette="viridis")
-        axes[1].set_title(f"Top 10 Behavioral Predictors of Preference", fontsize=14)
-        axes[1].set_xlabel("Impact on Prediction Score")
-        axes[1].set_ylabel("Behavioral Metric")
-
+        axes[1].set_title("Top Predictors (Final Model)")
+        
         plt.tight_layout(); plt.show()
+        
+        # Log MLFlow
+        mlflow.log_metric("rho_cv", rho_cv)
+        mlflow.log_metric("rho_test", rho_test)
+        mlflow.sklearn.log_model(reg, f"model_{model_name}")
