@@ -18,8 +18,8 @@ from sklearn.preprocessing import StandardScaler
 # ------------------------------------------------------------
 # 1) Loading the raw trial-level dataset
 # ------------------------------------------------------------
-# Based on your snippet, we assume this file contains raw trial rows
-df = pd.read_csv("data/extracted/trial_df.csv") 
+#this file contains raw trial rows
+df = pd.read_csv("../data/extracted/trial_df.csv") 
 
 TARGET = "vas_score"
 PERSON_ID = "fk_device_id"
