@@ -7,7 +7,7 @@ The goal of this project is to predict individual food liking (VAS scores) using
 
 ## Key Results
 - **Winning Model:** ElasticNet (Regularized Linear Regression)
-- **Performance:** Mean within-person Spearman **ρ = 0.12** (Chance ρ = -0.02)
+- **Performance:** Mean within-person Spearman **ρ = 0.10** 
 - **Primary Predictors:** Stimulus-specific deviations in False Alarm rates and Go-trial reaction times at the GNG task.
 
 ## Repository Structure
